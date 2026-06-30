@@ -68,3 +68,8 @@ func TestNormalizedList_VirtualPackagesExists_StdoutsConcretePackage(t *testing.
 	result := cmdtesting.New(t, createReplayLogs).Run("normalized-list", "libvips")
 	result.ExpectSuccessfulOut("libvips42=8.9.1-2")
 }
+
+func TestNormalizedList_MultipleVirtualPackagesExist_StdoutsAllConcretePackages(t *testing.T) {
+	result := cmdtesting.New(t, createReplayLogs).Run("normalized-list", "libmagic1", "libvips")
+	result.ExpectSuccessfulOut("libmagic1t64=1:5.45-3build1 libvips42t64=8.15.1-1.1build4")
+}

@@ -49,7 +49,8 @@ func getNonVirtualPackage(executor exec.Executor, name string) (pkg *AptPackage,
 	return &AptPackage{Name: splitLine.Words[0], Version: splitLine.Words[1]}, nil
 }
 
-func getPackage(executor exec.Executor, paragraph string) (pkg *AptPackage, err error) {
+func getPackages(executor exec.Executor, paragraph string) (pkgs []*AptPackage, err error) {
+	var pkg *AptPackage
 	errMsgs := []string{}
 	for _, splitLine := range GetSplitLines(paragraph, ":", 2) {
 		if len(splitLine.Words) < 2 {
@@ -61,14 +62,26 @@ func getPackage(executor exec.Executor, paragraph string) (pkg *AptPackage, err 
 			// Initialize since this will provide the first struct value if present.
 			pkg = &AptPackage{}
 			pkg.Name = splitLine.Words[1]
+			pkgs = append(pkgs, pkg)
 
 		case "Version":
-			pkg.Version = splitLine.Words[1]
+			if pkg != nil {
+				pkg.Version = splitLine.Words[1]
+			}
 
 		case "N":
 			// e.g.  Can't select versions from package 'libvips' as it is purely virtual
+			//
+			// A single paragraph can carry multiple such notices (one per virtual
+			// package requested), so resolve each rather than returning on the first.
 			if strings.Contains(splitLine.Words[1], "as it is purely virtual") {
-				return getNonVirtualPackage(executor, GetSplitLine(splitLine.Words[1], "'", 4).Words[2])
+				nonVirtual, resolveErr := getNonVirtualPackage(executor, GetSplitLine(splitLine.Words[1], "'", 4).Words[2])
+				if resolveErr != nil {
+					errMsgs = append(errMsgs, resolveErr.Error())
+				} else if nonVirtual != nil {
+					pkgs = append(pkgs, nonVirtual)
+				}
+				continue
 			}
 			if strings.HasPrefix(splitLine.Words[1], "Unable to locate package") && !ArrContainsString(errMsgs, splitLine.Line) {
 				errMsgs = append(errMsgs, splitLine.Line)
@@ -80,9 +93,9 @@ func getPackage(executor exec.Executor, paragraph string) (pkg *AptPackage, err 
 		}
 	}
 	if len(errMsgs) == 0 {
-		return pkg, nil
+		return pkgs, nil
 	}
-	return pkg, errors.New(strings.Join(errMsgs, "\n"))
+	return pkgs, errors.New(strings.Join(errMsgs, "\n"))
 }
 
 // Gets the APT based packages as a sorted by package name list (normalized).
@@ -104,11 +117,14 @@ func GetAptPackages(executor exec.Executor, names []string) (AptPackages, error)
 		if trimmed == "" {
 			continue
 		}
-		pkg, err := getPackage(executor, trimmed)
+		paragraphPkgs, err := getPackages(executor, trimmed)
 		if err != nil {
 			errMsgs = append(errMsgs, err.Error())
-		} else if pkg != nil { // Ignore cases where no package parsed and no errors occurred.
-			pkgs = append(pkgs, *pkg)
+		}
+		for _, pkg := range paragraphPkgs { // Ignore cases where no package parsed and no errors occurred.
+			if pkg != nil {
+				pkgs = append(pkgs, *pkg)
+			}
 		}
 	}
 
